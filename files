@@ -1,0 +1,5 @@
+fvPatchFields = fields/fvPatchFields
+
+derivedFvPatchFields = $(fvPatchFields)/derived
+
+$(derivedFvPatchFields)/surfaceStressModels/SchumannGrotzbachNeutral/SchumannGrotzbachNeutralFvPatchField.C
