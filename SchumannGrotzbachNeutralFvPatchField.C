@@ -127,7 +127,6 @@ void SchumannGrotzbachNeutralFvPatchField::evaluate
     const Pstream::commsTypes
 )
 {
-
     // ---Get preliminary information
     //    Get face normal vectors
     const vectorField normal = patch().nf();
@@ -138,31 +137,10 @@ void SchumannGrotzbachNeutralFvPatchField::evaluate
     const scalarField area = patch().magSf();
     const scalar areaTotal = gSum(area);
 
-    //    Get the gravity vector
-    const uniformDimensionedVectorField& gVec = db().lookupObject<uniformDimensionedVectorField>("g");
-    const scalar g = mag(gVec.value());
-    //Info << "gVec = " << gVec << tab
-    //     << "g    = " << g    << endl;
-
     //    Get perpendicular distance from cell center to boundary
     const scalarField z1 = 1.0/patch().deltaCoeffs();
-    scalar z1Mean = gSum(z1 * area)/areaTotal;
-
-    //    Get the average surface roughness height
-    scalar z0Mean = gSum(z0_ * area)/areaTotal;
-
-    //    Get the reference temperature
-//  const singlePhaseTransportModel& laminarTransport = db().lookupObject<singlePhaseTransportModel>("transportProperties");
-//  const dimensionedScalar& TRefDim = laminarTransport.lookup("TRef");
-    const dictionary& transportProperties = db().lookupObject<dictionary>("transportProperties");
-    dimensionedScalar TRefDim = transportProperties.lookup("TRef");
-    scalar TRef = TRefDim.value();
-  //scalar TRef = readScalar(transportProperties.lookup("TRef"));
-  //Info << "TRef = " << TRef << endl;
-
 
     vectorField loc = patch().Cf();
-
 
 
     // ---Get the velocity parallel to the boundary using,
@@ -209,157 +187,63 @@ void SchumannGrotzbachNeutralFvPatchField::evaluate
 
     //    Get magnitudes and means of the terrain-local velocity
     scalarField UParallelPMag = mag(UParallelP);
-  //scalar UParallelPMagMean = gSum(UParallelPMag * area) / areaTotal;
+    //scalar UParallelPMagMean = gSum(UParallelPMag * area) / areaTotal;
     vector UParallelPMean = gSum(UParallelP * area) / areaTotal;
     scalar UParallelPMeanMag = mag(UParallelPMean);
 
 
-
-
-
-
-    // ---Get the boundary temperature flux
-    // const fvPatchField<vector>& qwVec = patch().lookupPatchField<volVectorField, vector>("qwall");
-    // scalarField qw = qwVec & normal;
-    // scalar qwMean = gSum(qw * area)/areaTotal;
-
-    // neutral ABL: set heat flux to zero
-    scalarField qw(patch().size(), 0.0);
-    scalar qwMean(0.0);
-
-    //Info << "qw = " << qw << tab
-    //     << "qwMean = " << qwMean << endl;
-
-
-
-
-
-    // ---Compute the friction velocity, Obuhkov length, and non-dimensional shear
-    //    Define friction velocity
-    scalarField uStar(patch().size(),0.0);
-
-    //    Define Obhukov length
-    scalarField L(patch().size(),0.0);
-
-    //    Define non-dimensional shear
-    scalarField phiM(patch().size(),0.0);
-
-    //    Define the iteration count for the u* solve
-    scalarField iterFace(patch().size(),0.0);
-    scalar iterAvg(0.0);
-
-    forAll(uStar, facei)
-    {
-        if(averageType_ == "planarAverage")
-        {
-//          Info << "planarAverage" << endl;
-            if(facei == 0)
-            {
-                uStarEvaluate
-                (
-                    uStar[facei],
-                    L[facei],
-                    phiM[facei],
-                  //UParallelPMagMean,
-                    UParallelMeanMag,
-                    z1Mean,
-                    z0Mean,
-                    kappa_,
-                    gammaM_,
-                    betaM_,
-                    g,
-                    TRef,
-                    qwMean,
-                    1.0E-1,
-                    1.0E-8,
-                    iterFace[facei],
-                    1000
-                );
-            }
-            else
-            {
-                uStar[facei] = uStar[0];
-                L[facei] = L[0];
-                phiM[facei] = phiM[0];
-                iterFace[facei] = iterFace[0];
-            }
-
-        }
-        else if (averageType_ == "local")
-        {
-//          Info << "local -- no average" << endl;
-            uStarEvaluate
-            (
-                uStar[facei],
-                L[facei],
-                phiM[facei],
-                UParallelPMag[facei],
-                z1[facei],
-                z0_[facei],
-                kappa_,
-                gammaM_,
-                betaM_,
-                g,
-                TRef,
-                qw[facei],
-                1.0E-1,
-                1.0E-8,
-                iterFace[facei],
-                1000
-            );
-
-        }
-
-    }
-
-
-    //    Get average friction velocity
-    scalar uStarMean = gSum(uStar * area) / areaTotal;
-    scalar LMean = gSum(L * area) / areaTotal;
-    scalar phiMMean = gSum(phiM * area) / areaTotal;
-    iterAvg = gAverage(iterFace);
-
-    Info << "uStarMean = " << uStarMean << tab
-         << "LMean = " << LMean << tab
-         << "phiMMean = " << phiMMean << tab
-         << "Avg iterations = " << iterAvg << endl;
     Info << "UParallelMeanMag = " << UParallelMeanMag << tab
          << "UParallelPMeanMag = " << UParallelPMeanMag << endl;
 
 
-
-
+    //    Define friction velocity
+    scalar uStarMean(0.0);
 
 
     // ---Specify surface shear stresses (Schumann formulation)
     symmTensorField& Rw = *this;
     scalarField RwMag(patch().size(),0.0);
 
-    forAll(Rw, facei)
+    // Form the wall shear stress tensor in terrain-local coordinates
+    symmTensor RwP(symmTensor::zero);
+    vector xP(vector::zero);
+    vector yP(vector::zero);
+    vector zP(vector::zero);
+
+
+    // Info << "planarAverage" << endl;
+    if(averageType_ == "planarAverage")
     {
-        // Form the wall shear stress tensor in terrain-local coordinates
-        symmTensor RwP(symmTensor::zero);
-        vector xP(vector::zero);
-        vector yP(vector::zero);
-        vector zP(vector::zero);
-        if (averageType_ == "planarAverage")
+        scalar z1Mean = gSum(z1 * area)/areaTotal;
+
+        //    Get the average surface roughness height
+        scalar z0Mean = gSum(z0_ * area)/areaTotal;
+
+        uStarMean = (kappa_ * UParallelMeanMag) / Foam::log(z1Mean / z0Mean);
+
+        forAll(Rw, facei)
         {
-//            Info << "planarAverage" << endl;
             Rw[facei].xx() = 0.0;
-	    Rw[facei].xy() = 0.0;
-	  //RwP.xz() = -sqr(uStar[facei]) * (UParallelP[facei].x() / UParallelPMagMean);
-	    Rw[facei].xz() = -sqr(uStar[facei]) * (UParallel[facei].x() / max(UParallelMeanMag, 1.0E-5));
-	    Rw[facei].yy() = 0.0;
-	  //RwP.yz() = -sqr(uStar[facei]) * (UParallelP[facei].y() / UParallelPMagMean);
-	    Rw[facei].yz() = -sqr(uStar[facei]) * (UParallel[facei].y() / max(UParallelMeanMag, 1.0E-5));
-	    Rw[facei].zz() = 0.0;
+            Rw[facei].xy() = 0.0;
+            Rw[facei].xz() = -sqr(uStarMean) * (UParallel[facei].x() / max(UParallelMeanMag, 1.0E-5));
+            Rw[facei].yy() = 0.0;
+            Rw[facei].yz() = -sqr(uStarMean) * (UParallel[facei].y() / max(UParallelMeanMag, 1.0E-5));
+            Rw[facei].zz() = 0.0;
 
             // Get the magnitude of the surface stress vector
             RwMag[facei] = Foam::sqrt(Foam::sqr(Rw[facei].xz()) + Foam::sqr(Rw[facei].yz()));
         }
-        else if (averageType_ == "local")
+    }
+
+    //          Info << "local" << endl;
+    else if (averageType_ == "local")
+    {
+        scalarField uStar(patch().size(),0.0);
+
+        forAll(uStar, facei)
         {
-  //          Info << "local" << endl;
+            uStar[facei] = (kappa_ * UParallelPMag[facei]) / Foam::log(z1[facei] / z0_[facei]);
+
             RwP.xx() = 0.0;
             RwP.xy() = 0.0;
             RwP.xz() = -sqr(uStar[facei]) * (UParallelP[facei].x() / max(UParallelPMag[facei], 1.0E-5));
@@ -368,60 +252,30 @@ void SchumannGrotzbachNeutralFvPatchField::evaluate
             RwP.zz() = 0.0;
 
 
-            // Transform from the terrain-local into the Cartesian system
+          // Transform from the terrain-local into the Cartesian system
 
-            // z' is equal to the surface normal pointing inward (negative because
-            // OpenFOAM normal is outward)
-            zP = -normal[facei];
+          // z' is equal to the surface normal pointing inward (negative because
+          // OpenFOAM normal is outward)
+          zP = -normal[facei];
 
-            // x' is pointed in the direction of the parallel resolved velocity at this cell
-            xP = UParallel[facei];
+          // x' is pointed in the direction of the parallel resolved velocity at this cell
+          xP = UParallel[facei];
 
-            // y' is orthogonal to x' and z', so it can be found with cross product
-            yP = zP ^ xP;
+          // y' is orthogonal to x' and z', so it can be found with cross product
+          yP = zP ^ xP;
 
-            // Perform the transformation
-            Rw[facei] = transformSymmTensorLocalToCart(RwP, xP, yP, zP);
+          // Perform the transformation
+          Rw[facei] = transformSymmTensorLocalToCart(RwP, xP, yP, zP);
 
-            // Get the magnitude of the surface stress vector
-            RwMag[facei] = Foam::sqrt(Foam::sqr(RwP.xz()) + Foam::sqr(RwP.yz()));
+          // Get the magnitude of the surface stress vector
+          RwMag[facei] = Foam::sqrt(Foam::sqr(RwP.xz()) + Foam::sqr(RwP.yz()));
         }
 
-        //Info << "facei = " << facei << tab
-        //     << "Rw  = " << Rw[facei] << endl;
-        //scalar degToRad = Foam::constant::mathematical::pi/180;
-        //scalar angle = 30.0;
-        //xP.x() = Foam::cos(angle*degToRad);
-        //xP.y() = 0;
-        //xP.z() = Foam::sin(angle*degToRad);
-        //yP.x() = 0;
-        //yP.y() = 1;
-        //yP.z() = 0;
-        //zP.x() = -Foam::sin(angle*degToRad);
-        //zP.y() = 0;
-        //zP.z() = Foam::cos(angle*degToRad);
-        //symmTensor Sp(symmTensor::zero);
-        //Sp.xz() = -1;
-        //Sp.yz() = -0.1;
-        //symmTensor S;
-        //S = transformSymmTensorLocalToCart(Sp, xP, yP, zP);
-        //if (facei == 0)
-        //{
-        //   Info << "Sp = " << Sp << endl;
-        //   Info << "S = " << S << endl;
-        //}
-
-        //if ((loc[facei].x() < 1501 && loc[facei].x() > 1499) &&
-        //    (loc[facei].y() < 1501 && loc[facei].y() > 1499))
-        //{
-        //    Pout << "loc = " << loc[facei] << endl;
-        //    Pout << "UParallel " << UParallel[facei] << endl;
-        //    Pout << "UParallelP " << UParallelP[facei] << endl;
-        //    Pout << "xP, yP, zP " << xP << tab << yP << tab << zP << endl;
-        //    Pout << "RwP " << RwP << endl;
-        //    Pout << "Rw " << Rw[facei] << endl;
-        //}
+        //    Get average friction velocity
+        uStarMean = gSum(uStar * area) / areaTotal;
     }
+
+
     symmTensor RwMean = gSum(Rw * area) / areaTotal;
     scalar RwMeanMag = Foam::sqrt(Foam::sqr(RwMean.xz()) + Foam::sqr(RwMean.yz()));
     scalar RwMagMean = gSum(RwMag * area) / areaTotal;
@@ -584,302 +438,7 @@ symmTensor SchumannGrotzbachNeutralFvPatchField::transformSymmTensorLocalToCart
     return S;
 }
 
-void  SchumannGrotzbachNeutralFvPatchField::uStarEvaluate
-(
-    scalar& uStar,
-    scalar& L,
-    scalar& phiM,
-    scalar U,
-    scalar z1,
-    scalar z0,
-    scalar kappa,
-    scalar gammaM,
-    scalar betaM,
-    scalar g,
-    scalar TRef,
-    scalar qw,
-    scalar eps,
-    scalar tol,
-    label iter,
-    label iterMax
-)
-{
-            // To solve for u*, the Monin-Obuhkov similarity laws are used.  For neutral
-            // conditions, this is the simple log law, and u* can be found explicitly.
-            // For unstable or stable conditions, u* must be found iteratively, and below
-            // is a nonlinear Newton solver for finding u*
 
-            // Set iterator to zero
-            iter = 0;
-
-            // Set initial guesses at u*
-            scalar uStar0 = (kappa * U) / Foam::log(z1 / z0);
-            scalar uStar1 = (1.0 + eps) * uStar0;
-
-            // Limit u* to always be zero or positive
-            uStar0 = max(0.0, uStar0);
-            uStar1 = max(0.0, uStar1);
-
-            // neutral
-            if (qw == 0.0)
-            {
-            //  Info << "Neutral" << endl;
-
-                uStar = uStar0;
-                L = 1.0E30;
-                phiM = 1.0;
-            }
-
-            // --stable
-            // see book "Modelling of Atmospheric Flow Field", editors D. Lalas and C. Ratto
-            // chapter 2--Modelling the Vertical ABL Structure, D. Etling, pp. 56--57
-            else if (qw < 0.0)
-            {
-                label procPrint = -1;
-                if (Pstream::myProcNo() == procPrint)
-                {
-                Pout << "Stable" << endl;
-                Pout << "U = " << U << endl;
-                }
-
-                scalar f0 = 1E30;
-                scalar f1 = 1E30;
-
-                do
-                {
-                    iter++;
-
-
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "iter = " << iter << endl;
-                    Pout << "uStar0 = " << uStar0 << endl;
-                    Pout << "uStar1 = " << uStar1 << endl;
-                    Pout << "qw = " << qw << endl;
-                    }
-
-                    // set initial guesses at L
-                    scalar L0 = -(Foam::pow(uStar0,3.0)) / (kappa * (g/TRef) * qw);
-                    scalar L1 = -(Foam::pow(uStar1,3.0)) / (kappa * (g/TRef) * qw);
-
-                    // limit L to always be positive and finite
-                    L0 = max(1.0E-10,L0);
-                    L1 = max(1.0E-10,L1);
-
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "L0 = " << L0 << endl;
-                    Pout << "L1 = " << L1 << endl;
-                    }
-
-                    // form the "zeta" variable, which is z/L
-                    scalar zeta0 = z1/L0;
-                    scalar zeta1 = z1/L1;
-
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "zeta0 = " << zeta0 << endl;
-                    Pout << "zeta1 = " << zeta1 << endl;
-                    }
-
-                    // form psiM
-                    scalar psiM0 = -gammaM * zeta0;
-                    scalar psiM1 = -gammaM * zeta1;
-
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "psiM0 = " << psiM0 << endl;
-                    Pout << "psiM1 = " << psiM1 << endl;
-                    }
-
-                    // form the function that we are driving to zero
-                    //f0 = U - (uStar0/kappa)*(Foam::log(z1/z0) - psiM0);
-                    //f1 = U - (uStar1/kappa)*(Foam::log(z1/z0) - psiM1);
-                    scalar denom0 = Foam::log(z1/z0) - psiM0;
-                    scalar denom1 = Foam::log(z1/z0) - psiM1;
-                    if (denom0 == 0.0)
-                    {
-                        denom0 = 1.0E-10;
-                    }
-                    if (denom1 == 0.0)
-                    {
-                        denom1 = 1.0E-10;
-                    }
-                    f0 = uStar0 - ((U * kappa) / denom0);
-                    f1 = uStar1 - ((U * kappa) / denom1);
-
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "f0 = " << f0 << endl;
-                    Pout << "f1 = " << f1 << endl;
-                    }
-
-                    // update uStar
-
-                    scalar slope = (f1 - f0) / (uStar1 - uStar0);
-                    if (slope == 0.0)
-                    {
-                        slope = 1.0E-10;
-                    }
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "slope = " << slope << endl;
-                    }
-
-                    scalar uStar1Old = uStar1;
-                    uStar1 = max(0.0, uStar0 - (f0 / slope));
-
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "uStar1 = " << uStar1 << endl;
-                    }
-
-                    uStar0 = uStar1Old;
-                    if (Pstream::myProcNo() == procPrint)
-                    {
-                    Pout << "uStar0 = " << uStar0 << endl;
-                    }
-
-                    // in case this is converged, calculate uStar, L, and phiM
-                    uStar = uStar1;
-                    L = L1;
-                    phiM = 1.0 + (gammaM * zeta1);
-
-                } while ((mag(f1) > tol) && (uStar0 != uStar1) && (iter < iterMax));
-
-                if (iter >= iterMax-1)
-                {
-                    Info << "Max uStar iterations reached!!!" << endl;
-                }
-
-                // Sometimes the only solution to the stable version of the Monin-Obukhov
-                // scaling law is that friction velocity is zero, which does not make physical
-                // sense.  The equation above that we are trying to drive to zero increases
-                // with increasing friction velocity, but it often has a local minimum.  When
-                // there is a solution, the local minimum passes through zero (so there are really
-                // two solutions, but the solver above picks the larger zero passing, which is
-                // closer to the neutral scaling law solution).  When there is no solution,
-                // try picking this local minimum.  In extreme situations, the minimum disappears
-                // because the profile gets stretched out.  So, we rearrange the equation that
-                // we are driving to zero and pick its maximum.  See below.
-                if (uStar < 1.0E-2)
-                {
-                    scalar duStar = 0.5/100;
-                    uStar0 = 1.0E-10;
-                    uStar1 = uStar0 + duStar;
-                    scalar L0 = -(Foam::pow(uStar0,3.0)) / (kappa * (g/TRef) * qw);
-                    scalar L1 = -(Foam::pow(uStar1,3.0)) / (kappa * (g/TRef) * qw);
-                    scalar zeta0 = z1/L0;
-                    scalar zeta1 = z1/L1;
-                    scalar psiM0 = -gammaM * zeta0;
-                    scalar psiM1 = -gammaM * zeta1;
-                    f0 = U - (uStar0/kappa)*(Foam::log(z1/z0) - psiM0);
-                    f1 = U - (uStar1/kappa)*(Foam::log(z1/z0) - psiM1);
-                    do
-                    {
-                        uStar0 = uStar1;
-                        uStar1 = uStar0 + duStar;
-                        L0 = -(Foam::pow(uStar0,3.0)) / (kappa * (g/TRef) * qw);
-                        L1 = -(Foam::pow(uStar1,3.0)) / (kappa * (g/TRef) * qw);
-                        zeta0 = z1/L0;
-                        zeta1 = z1/L1;
-                        psiM0 = -gammaM * zeta0;
-                        psiM1 = -gammaM * zeta1;
-                        f0 = U - (uStar0/kappa)*(Foam::log(z1/z0) - psiM0);
-                        f1 = U - (uStar1/kappa)*(Foam::log(z1/z0) - psiM1);
-                    } while (f1 > f0);
-                    uStar = uStar0;
-                    L = L0;
-                    phiM = 1.0 + (gammaM * zeta1);
-                }
-                if (phiM > 10.0)
-                {
-                    Pout << "phiM = " << phiM << tab << "U = " << U << tab <<  "gammaM = " << gammaM << tab << "z1 =" << z1 << tab << "z0 = " << z0 << tab << "L = " << L << tab << "qw = " << qw << tab << "iter = " << iter << tab << "uStar = " << uStar << endl;
-                }
-            }
-
-            // --unstable
-            // see book "Modelling of Atmospheric Flow Field", editors D. Lalas and C. Ratto
-            // chapter 2--Modelling the Vertical ABL Structure, D. Etling, pp. 56--57 and
-            // article "The Mathematical Representation of Wind Speed and Temperature Profiles
-            // in the Unstable Atmospheric Surface Layer", C. Paulson, Journal of Applied
-            // Meteorology, Vol 9, 1970, pp. 857--861.
-            else if (qw > 0.0)
-            {
-                //Info << "Unstable" << endl;
-
-                scalar f0 = 1.0E30;
-                scalar f1 = 1.0E30;
-
-                do
-                {
-                    iter++;
-
-                    // set initial guesses at L
-                    scalar L0 = -(Foam::pow(uStar0,3.0)) / (kappa * (g/TRef) * qw);
-                    scalar L1 = -(Foam::pow(uStar1,3.0)) / (kappa * (g/TRef) * qw);
-
-                    // limit L to always be negative and finite
-                    L0 = min(-1.0E-10,L0);
-                    L1 = min(-1.0E-10,L1);
-
-                    // form the "zeta" variable, which is z/L
-                    scalar zeta0 = z1/L0;
-                    scalar zeta1 = z1/L1;
-
-                    // form the "x" variable in Paulson's paper
-                    scalar x0 = Foam::pow((1.0 - (betaM * zeta0)),0.25);
-                    scalar x1 = Foam::pow((1.0 - (betaM * zeta1)),0.25);
-
-                    // form psiM
-                    scalar psiM0 = 2.0*Foam::log((1.0+x0)/2.0) + Foam::log((1.0 + Foam::pow(x0,2.0))/2.0) - 2.0*Foam::atan(x0) + Foam::constant::mathematical::pi/2.0;
-                    scalar psiM1 = 2.0*Foam::log((1.0+x1)/2.0) + Foam::log((1.0 + Foam::pow(x1,2.0))/2.0) - 2.0*Foam::atan(x1) + Foam::constant::mathematical::pi/2.0;
-
-                    // form the function that we are driving to zero
-                    //f0 = U - (uStar0/kappa)*(Foam::log(z1/z0) - psiM0);
-                    //f1 = U - (uStar1/kappa)*(Foam::log(z1/z0) - psiM1);
-                    scalar denom0 = Foam::log(z1/z0) - psiM0;
-                    scalar denom1 = Foam::log(z1/z0) - psiM1;
-                    if (denom0 == 0.0)
-                    {
-                        denom0 = 1.0E-10;
-                    }
-                    if (denom1 == 0.0)
-                    {
-                        denom1 = 1.0E-10;
-                    }
-                    f0 = uStar0 - ((U * kappa) / denom0);
-                    f1 = uStar1 - ((U * kappa) / denom1);
-
-
-                    // update uStar
-                    scalar slope = (f1 - f0) / (uStar1 - uStar0);
-                    if (slope == 0.0)
-                    {
-                        slope = 1.0E-10;
-                    }
-                    scalar uStar1Old = uStar1;
-                    uStar1 = max(0.0, uStar0 - (f0 / slope));
-                    uStar0 = uStar1Old;
-
-                    // in case this is converged, calculate uStar, L, and phiM
-                    uStar = uStar1;
-                    L = L1;
-                    phiM = Foam::pow((1.0 - (betaM*zeta1)),-0.25);
-
-                } while ((mag(f1) > tol) && (uStar0 != uStar1) && (iter < iterMax));
-
-
-                if (iter >= iterMax-1)
-                {
-                    Info << "Max uStar iterations reached!!!" << endl;
-                }
-
-            }
-
-            //Info << "iter = " << iter << endl;
-
-}
 
 void SchumannGrotzbachNeutralFvPatchField::write(Ostream& os) const
 {
